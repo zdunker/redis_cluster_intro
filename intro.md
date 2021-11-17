@@ -1,5 +1,12 @@
-Understanding Hash Table application in Redis(cluster) / 哈希表在redis（集群）中的一些应用
+Redis集群中key的设计
 ===
+
+# 小游戏
+* 1号 黄色
+* 2号 红色
+* 3号 橙色
+* 4号 绿色
+* 5号 棕色
 
 # 一句话概括redis是什么
 
@@ -10,79 +17,69 @@ Understanding Hash Table application in Redis(cluster) / 哈希表在redis（集
 * string
 * hash
 * list
+* zset
 * ...
 
-## redis数据类型的基本设计单元
+## redis相应的数据类型命令
 
-* SDS （simple dynamic string）
-* Dictht （dictionary hash table）
-* ListNode
-* ...
+* Set, Get ...
+* HSet, HGet, HDel ...
+* LPUSH, LPOP ...
+* ZADD, ZREM ...
+# redis集群模式
 
-# redis中的dictht
+## 集群是怎么来的
 
-其不仅用于redis中hash系列命令（诸如HSet，HGet，HLen。。。）的实现，也参与在redis内部系统的构建之中。
+集群是由一些redis节点（node）组合构成的。（redis于3.0版本后开始支持cluster模式）
 
-## 如果让你写一个hash table的实现，你怎么写？（关注的重点有哪些）
+**Cluster Meet**
 
-* <span style="color:black">哈希的计算</span>
-* <span style="color:black">冲突的解决</span>
-* <span style="color:black">扩容与缩容（rehash）</span>
+![](1.png)
+![](2.png)
+![](3.png)
 
-## redis是如何设计的
+同时，集群共同管理16384个槽（slot），redis数据库中每个key都属于这16384个slot中的一个。集群中的每个redis node都能够处理最少0到最多16384个slot。
+当每个slot都被node认领时，整个集群的状态处于上线状态；相反的，只要有任意slot未被node认领，整个集群都处于下线状态。
 
-```c
-typedef struct dict{
-    dictType *type;
-    void *privdata;
+**Cluster Addslots**
+![](4.png)
+![](5.png)
 
-    //哈希表
-    dictht ht[2];
+为什么是16384个slot？https://github.com/redis/redis/issues/2576
 
-    //rehash索引
-    int rehashidx;
-} dict;
+## 计算key属于哪个槽
 
-typedef struct dictht{
-    //哈希表数组
-    dictEntry **table;
+**Cluster Keyslot**
+redis hashtag magic
+![](1637136045275.jpg)
 
-    //哈希表大小
-    unsigned long size;
+## 重新分片 （resharding）
+在新的node加入集群后，将已经被其他node持有的slots重新分配给新的node，这个过程叫做重新分片。此过程由redis-trib这个集群管理软件完成。
 
-    //哈希表大小掩码
-    unsigned long sizemask;
-
-    //这个表已有数量
-    unsigned long used;
-} dictht;
-
-typedef struct dictEntry{
-    //键
-    void *key;
-
-    //值
-    union{
-        void *val;
-        int64_t s64;
-        uint64_t u64;
-    } v;
-
-    struct dictEntry *next;
-} dictEntry;
-```
-> redis使用的是CRC16哈希算法
-
-## 思考：如果哈希表的大小被固定了，会发生什么？
-
-* <span style="color:black">任何key在哈希表里的位置也都固定，不会因为rehash而改变。</span>
-
-# redis cluster
-## quiz问题
+## 实际问题
 ![](D5B35197-9D16-422D-8EC3-B59A6D6FF180L0001.jpg)
 ![](5BD0DB7A-0A6D-4756-BB4E-F8B346D21BC0L0001.jpg)
 
-## 集群中的slots
+### 原quiz redis key设计
 
-## crc16 & 16384
-why 16384？ https://github.com/redis/redis/issues/2576
+```
+{QJCHM3J}:quiz:answered_total zset, 230W 个 item, 预估占用内存 210MB
+{QJCHM3J}:quiz:answered hash, 230W 个 item, 预估占用内存 2 GB
+
+zset key
+{QJCHM3J}:quiz:answered_total
+user_id1 -- 100
+user_id2 -- 101
+...
+
+hash key
+{QJCHM3J}:quiz:answered
+user_id1 -- quiz_id1,quiz_id2,quiz_id3...
+user_id2 -- quiz_id3,quiz_id5,quiz_id8...
+...
+```
+
+### 看完上面的这些知识点，现在给两个场景，思考一下怎样以正确的姿势使用redis集群？
+
+1. 每个用户的每个消费动作都能产生一个transaction，transaction里面记录了消费产生的货币消耗，消费时间等信息。如何通过redis设计key来保存这些transaction？
+2. 这个app的游戏世界中，稀有装备的掉落（产生），都有不同的个体差异，例如两个玩家都获得了稀有大宝剑，玩家1的大宝剑有独特的吸血属性，玩家2的大宝剑有独特的眩晕效果。如何通过redis设计key来保存这些掉落的大宝剑？
